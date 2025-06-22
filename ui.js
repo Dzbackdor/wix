@@ -177,6 +177,12 @@ window.WixLoginUI = {
         document.getElementById('resetBtn').onclick = () => {
             window.WixLoginCore?.resetState();
         };
+        
+        document.getElementById('resetLoginBtn').onclick = () => {
+            window.WixLoginCore?.resetLoginState();
+            window.WixLoginUI?.updateStatus('🔄 Login state reset');
+            window.WixLoginUI?.updateInfo('Ready to restart');
+        };
     },
     
     updateSiteInfo() {
