@@ -1,6 +1,6 @@
 // ==WixLoginCore==
 // Core login functionality for Wix Google Login Script
-// Version: 2.0
+// Version: 2.1
 
 window.WixLoginCore = {
     
@@ -8,7 +8,7 @@ window.WixLoginCore = {
     currentAccount: null,
     checkInterval: null,
     scrollAttempts: 0,
-    loginCompleted: false, // Tambahan flag
+    loginCompleted: false,
     
     getConfig() {
         return window.WixLoginConfig || {};
@@ -37,11 +37,13 @@ window.WixLoginCore = {
     },
     
     async startLogin() {
+        console.log('🚀 Starting login process...');
+        
         // PENGECEKAN AWAL - STOP JIKA SUDAH LOGIN
         if (window.WixLoginUtils?.isLoggedIn()) {
-            console.log('✅ SUDAH LOGIN - Menghentikan proses login');
-            window.WixLoginUI?.updateStatus('✅ Sudah login - Proses dihentikan');
-            this.onLoginSuccess();
+            console.log('✅ SUDAH LOGIN - Skip ke bagian komentar');
+            window.WixLoginUI?.updateStatus('✅ Sudah login - Skip ke komentar');
+            this.onLoginAlreadyComplete();
             return;
         }
         
@@ -66,24 +68,8 @@ window.WixLoginCore = {
             
             this.startMonitoring();
             
-            // STEP 1: Cek lagi sebelum mencari comment box
-            if (await this.checkLoginBeforeStep('comment box')) return;
-            await this.step1_FindCommentBox();
-            
-            // STEP 2: Cek lagi sebelum mencari login button
-            if (await this.checkLoginBeforeStep('login button')) return;
-            await this.step2_LoginButton();
-            
-            // STEP 3: Cek lagi sebelum switch signup
-            if (await this.checkLoginBeforeStep('signup switch')) return;
-            await this.step3_SwitchSignup();
-            
-            // STEP 4: Cek lagi sebelum Google button
-            if (await this.checkLoginBeforeStep('Google button')) return;
-            await this.step4_GoogleButton();
-            
-            // STEP 5: Wait for completion
-            await this.step5_WaitCompletion();
+            // STEP 1: Cari comment box SAMBIL cek login status
+            await this.step1_FindCommentBoxWithLoginCheck();
             
         } catch (error) {
             console.error('❌ Login failed:', error.message);
@@ -91,40 +77,40 @@ window.WixLoginCore = {
             this.loginInProgress = false;
             this.stopMonitoring();
             
-            // Jangan set loginCompleted = true jika error
             GM_notification(`Login error: ${error.message}`, 'Error');
         }
     },
     
-    // Fungsi untuk cek login sebelum setiap step
-    async checkLoginBeforeStep(stepName) {
-        console.log(`🔍 Checking login status before ${stepName} step...`);
-        
-        if (window.WixLoginUtils?.isLoggedIn()) {
-            console.log(`✅ SUDAH LOGIN - Skip ${stepName} step`);
-            window.WixLoginUI?.updateStatus(`✅ Sudah login - Skip ${stepName}`);
-            this.onLoginSuccess();
-            return true; // Return true = skip step
-        }
-        
-        return false; // Return false = continue step
-    },
-    
-    async step1_FindCommentBox() {
-        console.log('\n📝 STEP 1: Finding comment box...');
+    async step1_FindCommentBoxWithLoginCheck() {
+        console.log('\n📝 STEP 1: Finding comment box with login check...');
         window.WixLoginUI?.updateStatus('📝 Mencari comment box...');
         
         try {
-            const commentBox = await window.WixLoginUtils?.findCommentBox();
-            console.log('✅ Comment box found!');
-            await window.WixLoginUtils?.clickElementAdvanced(commentBox, 'Comment box');
+            // Gunakan fungsi khusus yang cek login selama scroll
+            const result = await this.findCommentBoxWithLoginMonitoring();
             
-            // Delay dan cek login setelah klik
-            await this.delay(2000);
-            if (window.WixLoginUtils?.isLoggedIn()) {
-                console.log('✅ Login terdeteksi setelah klik comment box');
-                this.onLoginSuccess();
+            if (result.alreadyLoggedIn) {
+                console.log('✅ Login terdeteksi selama pencarian comment box');
+                this.onLoginAlreadyComplete();
                 return;
+            }
+            
+            if (result.commentBox) {
+                console.log('✅ Comment box found, user belum login');
+                await window.WixLoginUtils?.clickElementAdvanced(result.commentBox, 'Comment box');
+                
+                // Delay dan cek login setelah klik
+                await this.delay(2000);
+                if (window.WixLoginUtils?.isLoggedIn()) {
+                    console.log('✅ Login terdeteksi setelah klik comment box');
+                    this.onLoginSuccess();
+                    return;
+                }
+                
+                // Lanjut ke step 2
+                await this.step2_LoginButton();
+            } else {
+                throw new Error('Comment box tidak ditemukan dan user belum login');
             }
             
         } catch (error) {
@@ -133,9 +119,109 @@ window.WixLoginCore = {
         }
     },
     
+    async findCommentBoxWithLoginMonitoring() {
+        console.log('🔍 Mencari comment box sambil monitor login status...');
+        
+        const config = this.getConfig();
+        const maxScrolls = config.scroll?.maxScrolls || 20;
+        const scrollStep = config.scroll?.step || 300;
+        const waitAfterScroll = config.scroll?.waitAfterScroll || 1000;
+        
+        const commentBoxSelectors = [
+            '[data-hook="comment-box-placeholder-text"]',
+            '[data-testid="comment-box"]',
+            '[data-hook*="comment"]',
+            '.comment-box',
+            '.comment-placeholder'
+        ];
+        
+        // Cek awal sebelum scroll
+        console.log('🔍 Cek awal sebelum scroll...');
+        
+        // CEK LOGIN DULU
+        if (window.WixLoginUtils?.isLoggedIn()) {
+            console.log('✅ SUDAH LOGIN - Ditemukan logout button');
+            return { alreadyLoggedIn: true, commentBox: null };
+        }
+        
+        // CEK COMMENT BOX
+        for (const selector of commentBoxSelectors) {
+            const element = document.querySelector(selector);
+            if (element) {
+                console.log(`✅ Comment box ditemukan tanpa scroll: ${selector}`);
+                return { alreadyLoggedIn: false, commentBox: element };
+            }
+        }
+        
+        // Mulai scroll dan monitor
+        console.log('📜 Mulai scroll dan monitor...');
+        
+        for (let i = 0; i < maxScrolls; i++) {
+            console.log(`📜 Scroll ${i + 1}/${maxScrolls}`);
+            window.WixLoginUI?.updateStatus(`📜 Scroll ${i + 1}/${maxScrolls} - Cek login...`);
+            
+            // Scroll dulu
+            window.scrollBy(0, scrollStep);
+            await this.delay(waitAfterScroll);
+            
+            // CEK LOGIN SETELAH SCROLL - PRIORITAS UTAMA
+            if (window.WixLoginUtils?.isLoggedIn()) {
+                console.log('✅ SUDAH LOGIN - Ditemukan logout button saat scroll');
+                return { alreadyLoggedIn: true, commentBox: null };
+            }
+            
+            // CEK COMMENT BOX SETELAH SCROLL
+            for (const selector of commentBoxSelectors) {
+                const element = document.querySelector(selector);
+                if (element) {
+                    console.log(`✅ Comment box ditemukan saat scroll ${i + 1}: ${selector}`);
+                    await window.WixLoginUtils?.scrollToElement(element);
+                    return { alreadyLoggedIn: false, commentBox: element };
+                }
+            }
+            
+            // Cek jika sudah sampai bawah
+            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+            const scrollHeight = document.documentElement.scrollHeight;
+            const clientHeight = window.innerHeight;
+            
+            if (scrollTop + clientHeight >= scrollHeight - 100) {
+                console.log('📜 Reached bottom of page');
+                break;
+            }
+        }
+        
+        // Final check setelah scroll selesai
+        console.log('🔍 Final check setelah scroll selesai...');
+        
+        // CEK LOGIN FINAL
+        if (window.WixLoginUtils?.isLoggedIn()) {
+            console.log('✅ SUDAH LOGIN - Final check');
+            return { alreadyLoggedIn: true, commentBox: null };
+        }
+        
+        // CEK COMMENT BOX FINAL
+        for (const selector of commentBoxSelectors) {
+            const element = document.querySelector(selector);
+            if (element) {
+                console.log(`✅ Comment box ditemukan di final check: ${selector}`);
+                return { alreadyLoggedIn: false, commentBox: element };
+            }
+        }
+        
+        throw new Error('Comment box tidak ditemukan dan user belum login');
+    },
+    
     async step2_LoginButton() {
         console.log('\n👤 STEP 2: Looking for login button...');
         window.WixLoginUI?.updateStatus('👤 Mencari login button...');
+        
+        // CEK LOGIN SEBELUM STEP 2
+        if (window.WixLoginUtils?.isLoggedIn()) {
+            console.log('✅ SUDAH LOGIN - Skip step 2');
+            this.onLoginAlreadyComplete();
+            return;
+        }
         
         await this.delay(2000);
         
@@ -151,6 +237,9 @@ window.WixLoginCore = {
                 return;
             }
             
+            // Lanjut ke step 3
+            await this.step3_SwitchSignup();
+            
         } catch (error) {
             console.log('❌ Step 2 failed:', error.message);
             throw new Error(`Login button step failed: ${error.message}`);
@@ -160,6 +249,13 @@ window.WixLoginCore = {
     async step3_SwitchSignup() {
         console.log('\n📝 STEP 3: Looking for signup switch...');
         window.WixLoginUI?.updateStatus('📝 Mencari signup switch...');
+        
+        // CEK LOGIN SEBELUM STEP 3
+        if (window.WixLoginUtils?.isLoggedIn()) {
+            console.log('✅ SUDAH LOGIN - Skip step 3');
+            this.onLoginAlreadyComplete();
+            return;
+        }
         
         await this.delay(2000);
         
@@ -175,6 +271,9 @@ window.WixLoginCore = {
                 return;
             }
             
+            // Lanjut ke step 4
+            await this.step4_GoogleButton();
+            
         } catch (error) {
             console.log('❌ Step 3 failed:', error.message);
             throw new Error(`Signup switch step failed: ${error.message}`);
@@ -184,6 +283,13 @@ window.WixLoginCore = {
     async step4_GoogleButton() {
         console.log('\n🔓 STEP 4: Google button...');
         window.WixLoginUI?.updateStatus('🔓 Mencari Google button...');
+        
+        // CEK LOGIN SEBELUM STEP 4
+        if (window.WixLoginUtils?.isLoggedIn()) {
+            console.log('✅ SUDAH LOGIN - Skip step 4');
+            this.onLoginAlreadyComplete();
+            return;
+        }
         
         await this.delay(3000);
         
@@ -224,6 +330,9 @@ window.WixLoginCore = {
                     return;
                 }
                 
+                // Lanjut ke step 5 (wait completion)
+                await this.step5_WaitCompletion();
+                
             } else {
                 throw new Error('Google button not found');
             }
@@ -231,26 +340,10 @@ window.WixLoginCore = {
         } catch (error) {
             console.log('❌ Step 4 failed:', error.message);
             this.showManualInstructions();
+            
+            // Tetap lanjut ke wait completion
+            await this.step5_WaitCompletion();
         }
-    },
-    
-    showManualInstructions() {
-        console.log('📋 Showing manual instructions...');
-        
-        GM_notification(
-            'Silakan klik tombol Google signup secara manual. Pastikan popup diizinkan.',
-            'Manual Action Required',
-            null,
-            () => {
-                // Try to find and highlight Google button
-                const googleButton = window.WixLoginUtils?.findGoogleButton();
-                if (googleButton) {
-                    googleButton.style.border = '5px solid red';
-                    googleButton.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
-                    googleButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
-            }
-        );
     },
     
     async step5_WaitCompletion() {
@@ -292,6 +385,25 @@ window.WixLoginCore = {
         });
     },
     
+    showManualInstructions() {
+        console.log('📋 Showing manual instructions...');
+        
+        GM_notification(
+            'Silakan klik tombol Google signup secara manual. Pastikan popup diizinkan.',
+            'Manual Action Required',
+            null,
+            () => {
+                // Try to find and highlight Google button
+                const googleButton = window.WixLoginUtils?.findGoogleButton();
+                if (googleButton) {
+                    googleButton.style.border = '5px solid red';
+                    googleButton.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
+                    googleButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }
+        );
+    },
+    
     // ==================== MONITORING ====================
     startMonitoring() {
         console.log('👀 Starting login monitoring...');
@@ -313,8 +425,9 @@ window.WixLoginCore = {
         }
     },
     
+    // ==================== LOGIN SUCCESS HANDLERS ====================
     onLoginSuccess() {
-        console.log('🎉 LOGIN SUCCESS CONFIRMED!');
+        console.log('🎉 LOGIN SUCCESS - User baru saja login!');
         
         // Set flags
         this.loginInProgress = false;
@@ -333,11 +446,41 @@ window.WixLoginCore = {
         
         // Trigger next phase (comment) setelah delay
         setTimeout(() => {
-            if (window.WixLoginApp?.handleLoggedInUser) {
-                console.log('🚀 Triggering next phase...');
-                window.WixLoginApp.handleLoggedInUser();
-            }
+            this.triggerCommentPhase();
         }, 3000);
+    },
+    
+    onLoginAlreadyComplete() {
+        console.log('✅ LOGIN ALREADY COMPLETE - User sudah login sebelumnya!');
+        
+        // Set flags
+        this.loginInProgress = false;
+        this.loginCompleted = true;
+        
+        window.WixLoginUI?.updateStatus('✅ Sudah login - Skip ke komentar');
+        GM_notification('Sudah login, langsung ke bagian komentar', 'Already Logged In');
+        
+        this.stopMonitoring();
+        
+        console.log('✅ Skip login process, ready for comment phase');
+        
+        // Trigger comment phase immediately
+        setTimeout(() => {
+            this.triggerCommentPhase();
+        }, 2000);
+    },
+    
+    triggerCommentPhase() {
+        console.log('💬 Triggering comment phase...');
+        
+        if (window.WixLoginApp?.handleLoggedInUser) {
+            console.log('🚀 Starting comment phase...');
+            window.WixLoginApp.handleLoggedInUser();
+        } else {
+            console.log('⚠️ Comment phase handler not available yet');
+            window.WixLoginUI?.updateStatus('⚠️ Comment phase belum tersedia');
+            window.WixLoginUI?.updateInfo('Comment handler belum diimplementasi');
+        }
     },
     
     // ==================== RESET FUNCTIONS ====================
@@ -378,7 +521,62 @@ window.WixLoginCore = {
             currentAccount: this.currentAccount?.email || null,
             hasMonitoring: !!this.checkInterval
         };
+    },
+    
+    // ==================== DEBUG FUNCTIONS ====================
+    debugCurrentState() {
+        const status = this.getLoginStatus();
+        console.log('🔧 Current Login State:', status);
+        
+        // Cek elemen penting
+        const logoutButton = document.querySelector('[data-hook="user-auth-logout"]');
+        const commentBox = document.querySelector('[data-hook="comment-box-placeholder-text"]');
+        
+        console.log('🔧 Important Elements:');
+        console.log('  - Logout button:', logoutButton ? '✅ Found' : '❌ Not found');
+        console.log('  - Comment box:', commentBox ? '✅ Found' : '❌ Not found');
+        
+        return {
+            ...status,
+            elements: {
+                logoutButton: !!logoutButton,
+                commentBox: !!commentBox
+            }
+        };
+    },
+    
+    // Test function untuk cek logika
+    async testLoginLogic() {
+        console.log('🧪 Testing login logic...');
+        
+        const initialState = this.debugCurrentState();
+        console.log('🧪 Initial state:', initialState);
+        
+        if (initialState.isLoggedIn) {
+            console.log('🧪 User sudah login - Should skip to comment');
+            this.onLoginAlreadyComplete();
+        } else {
+            console.log('🧪 User belum login - Should start login process');
+            
+            // Test comment box search with login monitoring
+            try {
+                const result = await this.findCommentBoxWithLoginMonitoring();
+                console.log('🧪 Comment box search result:', result);
+                
+                if (result.alreadyLoggedIn) {
+                    console.log('🧪 Login detected during search - Should skip to comment');
+                } else if (result.commentBox) {
+                    console.log('🧪 Comment box found, user not logged in - Should continue login');
+                } else {
+                    console.log('🧪 No comment box, user not logged in - Should show error');
+                }
+            } catch (error) {
+                console.log('🧪 Test error:', error.message);
+            }
+        }
     }
 };
 
-console.log('✅ WixLoginCore loaded with login completion detection');
+console.log('✅ WixLoginCore loaded with improved login logic');
+console.log('🔧 Available test function: window.WixLoginCore.testLoginLogic()');
+
