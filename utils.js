@@ -427,71 +427,117 @@ window.WixLoginUtils = {
     // ==================== ELEMENT INTERACTION ====================
     async clickElementAdvanced(element, description = '') {
         if (!element) {
-            throw this.createDetailedError(`Cannot click: ${description} - element not found`);
+            throw new Error(`Cannot click: ${description} - element not found`);
         }
         
         console.log(`🖱️ Advanced clicking: ${description}`);
         
-        // Scroll to element first
+        // PREVENT DOUBLE CLICK FOR GOOGLE BUTTONS
+        if (description.toLowerCase().includes('google')) {
+            if (window.WixLoginPopupBypass?.popupInProgress) {
+                console.log('⚠️ Google popup already in progress, skipping click');
+                return true;
+            }
+            
+            console.log('🔓 Setting up popup bypass for Google button...');
+            window.WixLoginPopupBypass?.setupPopupBypass();
+        }
+        
         await this.scrollToElement(element);
         await this.delay(500);
         
-        // Multiple click methods
-        const clickMethods = [
-            () => {
-                console.log('   Method 1: Standard click()');
-                element.click();
-            },
-            () => {
-                console.log('   Method 2: Focus + click');
-                element.focus();
-                element.click();
-            },
-            () => {
-                console.log('   Method 3: MouseEvent');
-                const event = new MouseEvent('click', {
-                    bubbles: true,
-                    cancelable: true,
-                    view: window,
-                    isTrusted: true
-                });
-                element.dispatchEvent(event);
-            },
-            () => {
-                console.log('   Method 4: Direct onclick');
-                if (element.onclick) {
-                    element.onclick.call(element);
-                } else {
+        // Add click protection flag
+        if (element._clickInProgress) {
+            console.log('⚠️ Click already in progress for this element');
+            return false;
+        }
+        
+        element._clickInProgress = true;
+        
+        try {
+            // Multiple click methods
+            const clickMethods = [
+                () => {
+                    console.log('   Method 1: Standard click()');
                     element.click();
+                },
+                () => {
+                    console.log('   Method 2: Focus + click');
+                    element.focus();
+                    element.click();
+                },
+                () => {
+                    console.log('   Method 3: MouseEvent');
+                    const clickEvent = new MouseEvent('click', {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window,
+                        isTrusted: true
+                    });
+                    element.dispatchEvent(clickEvent);
+                }
+            ];
+            
+            // Try first method only for Google buttons to prevent double popup
+            const methodsToTry = description.toLowerCase().includes('google') ? 1 : clickMethods.length;
+            
+            for (let i = 0; i < methodsToTry; i++) {
+                try {
+                    console.log(`🖱️ Trying click method ${i + 1}/${methodsToTry}`);
+                    clickMethods[i]();
+                    await this.delay(1500);
+                    
+                    // Check if click worked
+                    if (this.checkClickSuccess(description)) {
+                        console.log(`✅ Click method ${i + 1} successful!`);
+                        return true;
+                    }
+                } catch (error) {
+                    console.log(`   Click method ${i + 1} failed:`, error.message);
                 }
             }
-        ];
-        
-        // Try each click method
-        for (let i = 0; i < clickMethods.length; i++) {
-            try {
-                console.log(`🖱️ Trying click method ${i + 1}/${clickMethods.length}`);
-                clickMethods[i]();
-                await this.delay(1500);
-                
-                // Check if click worked (basic check)
-                if (this.checkBasicClickSuccess()) {
-                    console.log(`✅ Click method ${i + 1} successful!`);
-                    return true;
-                }
-            } catch (error) {
-                console.log(`   Click method ${i + 1} failed:`, error.message);
+            
+            console.log('⚠️ All click methods attempted');
+            return false;
+            
+        } finally {
+            // Reset click protection after delay
+            setTimeout(() => {
+                element._clickInProgress = false;
+            }, 3000);
+        }
+    },
+    
+    checkClickSuccess(description = '') {
+        // For Google buttons, check popup status
+        if (description.toLowerCase().includes('google')) {
+            const popupStatus = window.WixLoginPopupBypass?.getPopupStatus();
+            
+            if (popupStatus?.popupInProgress) {
+                console.log('✅ Google popup in progress');
+                return true;
+            }
+            
+            if (popupStatus?.hasCurrentPopup) {
+                console.log('✅ Google popup is open');
+                return true;
             }
         }
         
-        console.log('⚠️ All click methods attempted');
+        // Check if redirected to Google
+        if (window.location.href.includes('accounts.google.com')) {
+            console.log('✅ Redirected to Google');
+            return true;
+        }
+        
+        // Check for new modal/overlay
+        const modals = document.querySelectorAll('[role="dialog"], .modal, .overlay, .popup');
+        if (modals.length > 0) {
+            console.log('✅ New modal/dialog detected');
+            return true;
+        }
+        
         return false;
-    },
-    
-    checkBasicClickSuccess() {
-        // Basic checks for click success
-        // This can be overridden by specific implementations
-        return true;
     },
     
     // ==================== GOOGLE BUTTON DETECTION ====================
