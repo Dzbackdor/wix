@@ -1,6 +1,6 @@
 // ==WixLoginCore==
 // Core login functionality for Wix Google Login Script
-// Version: 2.1
+// Version: 2.2
 
 window.WixLoginCore = {
     
@@ -77,7 +77,10 @@ window.WixLoginCore = {
             this.loginInProgress = false;
             this.stopMonitoring();
             
-            GM_notification(`Login error: ${error.message}`, 'Error');
+            // HANYA NOTIFIKASI UNTUK ERROR PENTING
+            if (error.message.includes('Comment box tidak ditemukan')) {
+                GM_notification('Comment box tidak ditemukan di halaman ini', 'Error');
+            }
         }
     },
     
@@ -304,11 +307,8 @@ window.WixLoginCore = {
                     window.WixLoginPopupBypass.setupPopupBypass();
                 }
                 
-                // Show notification about popup
-                GM_notification(
-                    'Google login popup akan terbuka. Pastikan popup diizinkan.',
-                    'Popup Permission Required'
-                );
+                // HAPUS NOTIFIKASI POPUP - TIDAK PERLU
+                // GM_notification('Google login popup akan terbuka...', 'Popup Permission Required');
                 
                 await this.delay(2000);
                 
@@ -350,6 +350,7 @@ window.WixLoginCore = {
         console.log('\n⏳ STEP 5: Waiting for login completion...');
         window.WixLoginUI?.updateStatus('⏳ Menunggu completion...');
         
+        // HANYA NOTIFIKASI PENTING - INSTRUKSI MANUAL LOGIN
         GM_notification(
             `Selesaikan Google login dengan: ${this.currentAccount?.email}`,
             'Complete Login'
@@ -388,20 +389,21 @@ window.WixLoginCore = {
     showManualInstructions() {
         console.log('📋 Showing manual instructions...');
         
+        // HANYA NOTIFIKASI PENTING - INSTRUKSI MANUAL
         GM_notification(
-            'Silakan klik tombol Google signup secara manual. Pastikan popup diizinkan.',
-            'Manual Action Required',
-            null,
-            () => {
-                // Try to find and highlight Google button
-                const googleButton = window.WixLoginUtils?.findGoogleButton();
-                if (googleButton) {
-                    googleButton.style.border = '5px solid red';
-                    googleButton.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
-                    googleButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
-            }
+            'Silakan klik tombol Google signup secara manual.',
+            'Manual Action Required'
         );
+        
+        // Highlight Google button tanpa callback notifikasi
+        setTimeout(() => {
+            const googleButton = window.WixLoginUtils?.findGoogleButton();
+            if (googleButton) {
+                googleButton.style.border = '5px solid red';
+                googleButton.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
+                googleButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }, 1000);
     },
     
     // ==================== MONITORING ====================
@@ -434,6 +436,8 @@ window.WixLoginCore = {
         this.loginCompleted = true;
         
         window.WixLoginUI?.updateStatus('🎉 Login berhasil!');
+        
+        // HANYA NOTIFIKASI SUCCESS YANG PENTING
         GM_notification('Login berhasil!', 'Success');
         
         this.stopMonitoring();
@@ -458,11 +462,11 @@ window.WixLoginCore = {
         this.loginCompleted = true;
         
         window.WixLoginUI?.updateStatus('✅ Sudah login - Skip ke komentar');
-        GM_notification('Sudah login, langsung ke bagian komentar', 'Already Logged In');
+        
+        // HAPUS NOTIFIKASI BERLEBIHAN - HANYA LOG
+        console.log('✅ Skip login process, ready for comment phase');
         
         this.stopMonitoring();
-        
-        console.log('✅ Skip login process, ready for comment phase');
         
         // Trigger comment phase immediately
         setTimeout(() => {
@@ -577,6 +581,4 @@ window.WixLoginCore = {
     }
 };
 
-console.log('✅ WixLoginCore loaded with improved login logic');
-console.log('🔧 Available test function: window.WixLoginCore.testLoginLogic()');
-
+console.log('✅ WixLoginCore loaded with minimal notifications');
