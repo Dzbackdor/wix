@@ -314,37 +314,76 @@ window.WixLoginUI = {
         });
     },
     
+    testPopupBlocker() {
+        console.log('🧪 Testing popup blocker...');
+        this.updateStatus('🧪 Testing popup...');
+        
+        try {
+            const testPopup = window.open('about:blank', '_blank', 'width=400,height=300');
+            
+            if (testPopup) {
+                console.log('✅ Test popup opened successfully');
+                this.updatePopupStatus('Working ✅');
+                this.updateInfo('Popup test successful');
+                
+                // Close test popup after 3 seconds
+                setTimeout(() => {
+                    try {
+                        testPopup.close();
+                        console.log('✅ Test popup closed');
+                    } catch (e) {
+                        console.log('⚠️ Could not close test popup');
+                    }
+                }, 3000);
+                
+                // HAPUS NOTIFIKASI - HANYA LOG
+                console.log('✅ Popup test successful! Popups are working.');
+                
+            } else {
+                console.log('❌ Test popup was blocked');
+                this.updatePopupStatus('Blocked ❌');
+                this.updateInfo('Popup test failed');
+                
+                // HANYA NOTIFIKASI PENTING - POPUP BLOCKED
+                GM_notification(
+                    'Popup blocked! Please allow popups for this site.',
+                    'Popup Blocked'
+                );
+            }
+        } catch (error) {
+            console.log('❌ Popup test error:', error.message);
+            this.updatePopupStatus('Error ❌');
+            this.updateInfo('Popup test error');
+        }
+    },
+    
     showPopupInstructions() {
-        console.log('📋 Menampilkan instruksi popup...');
+        console.log('📋 Showing popup instructions...');
         
         const instructions = `
-Untuk mengizinkan popup di Microsoft Edge:
+To allow popups in Microsoft Edge:
 
-1. Klik ikon 🔒 kunci di address bar
-2. Klik "Permissions for this site"
-3. Cari "Pop-ups and redirects"
-4. Ubah ke "Allow"
-5. Refresh halaman
+1. Click the 🔒 lock icon in the address bar
+2. Click "Permissions for this site"
+3. Find "Pop-ups and redirects"
+4. Change it to "Allow"
+5. Refresh the page
 
-Atau:
-1. Buka Edge Settings (⋯ menu > Settings)
-2. Klik "Cookies and site permissions"
-3. Klik "Pop-ups and redirects"
-4. Tambahkan situs ini ke daftar "Allow"
+Or:
+1. Go to Edge Settings (⋯ menu > Settings)
+2. Click "Cookies and site permissions"
+3. Click "Pop-ups and redirects"
+4. Add this site to "Allow" list
 
-Situs saat ini: ${window.location.hostname}
+Current site: ${window.location.hostname}
         `;
         
         console.log(instructions);
         
-        GM_notification(
-            'Cek console untuk instruksi popup',
-            'Instruksi Popup',
-            null,
-            () => console.log('Instruksi ditampilkan')
-        );
+        // HAPUS NOTIFIKASI - HANYA LOG
+        console.log('📋 Popup instructions shown in console');
         
-        this.updateInfo('Instruksi popup di console');
+        this.updateInfo('Popup instructions in console');
     },
     
     async testScroll() {
@@ -375,20 +414,22 @@ Situs saat ini: ${window.location.hostname}
     },
     
     async testFindGoogle() {
-        console.log('🔍 Testing deteksi tombol Google...');
-        this.updateStatus('🔍 Mencari tombol Google...');
+        console.log('🔍 Testing Google button detection...');
+        this.updateStatus('🔍 Finding Google buttons...');
         
         try {
-            const googleButton = await window.WixLoginCore?.findGoogleButton();
+            const googleButton = await window.WixLoginUtils?.findGoogleButton();
             
             if (googleButton) {
-                console.log('✅ Tombol Google ditemukan!');
-                this.updateStatus('✅ Tombol Google ditemukan');
-                this.updateInfo('Tombol Google terdeteksi');
+                console.log('✅ Google button found!');
+                this.updateStatus('✅ Google button found');
+                this.updateInfo('Google button detected');
                 
+                // Highlight the button
                 window.WixLoginUtils?.highlightElement(googleButton);
                 googleButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 
+                // Show button details
                 const details = {
                     text: googleButton.textContent?.trim().substring(0, 50),
                     tagName: googleButton.tagName,
@@ -397,27 +438,26 @@ Situs saat ini: ${window.location.hostname}
                     dataTestId: googleButton.getAttribute('data-testid')
                 };
                 
-                console.log('🔍 Detail tombol:', details);
+                console.log('🔍 Button details:', details);
                 
-                GM_notification(
-                    `Ditemukan: ${details.text || 'Tombol Google'}`,
-                    'Tombol Google Ditemukan'
-                );
+                // HAPUS NOTIFIKASI - HANYA LOG
+                console.log(`✅ Found Google button: ${details.text || 'Google button'}`);
                 
             } else {
-                console.log('❌ Tombol Google tidak ditemukan');
-                this.updateStatus('❌ Tombol Google tidak ditemukan');
-                this.updateInfo('Tidak ada tombol Google terdeteksi');
+                console.log('❌ Google button not found');
+                this.updateStatus('❌ Google button not found');
+                this.updateInfo('No Google button detected');
                 
+                // HANYA NOTIFIKASI PENTING - NOT FOUND
                 GM_notification(
-                    'Tombol Google tidak ditemukan. Coba scroll atau pastikan form signup terbuka.',
-                    'Tidak Ditemukan'
+                    'No Google button found. Try scrolling or check if signup form is open.',
+                    'Not Found'
                 );
             }
         } catch (error) {
-            console.log('❌ Error pencarian tombol Google:', error.message);
-            this.updateStatus('❌ Error pencarian');
-            this.updateInfo('Pencarian tombol Google gagal');
+            console.log('❌ Google button search error:', error.message);
+            this.updateStatus('❌ Search error');
+            this.updateInfo('Google button search failed');
         }
     },
     
