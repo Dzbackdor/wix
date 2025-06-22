@@ -1,6 +1,6 @@
 // ==WixLoginCore==
 // Core login functionality for Wix Google Login Script
-// Version: 1.0
+// Version: 2.0
 
 window.WixLoginCore = {
     
@@ -8,146 +8,269 @@ window.WixLoginCore = {
     currentAccount: null,
     checkInterval: null,
     scrollAttempts: 0,
+    loginCompleted: false, // Tambahan flag
+    
+    getConfig() {
+        return window.WixLoginConfig || {};
+    },
+    
+    shouldAutoStart() {
+        // Jangan auto start jika sudah login
+        if (window.WixLoginUtils?.isLoggedIn()) {
+            console.log('⚠️ Skip auto-start: Sudah login');
+            return false;
+        }
+        
+        // Jangan auto start jika login sedang berlangsung
+        if (this.loginInProgress) {
+            console.log('⚠️ Skip auto-start: Login sedang berlangsung');
+            return false;
+        }
+        
+        // Jangan auto start jika login sudah selesai
+        if (this.loginCompleted) {
+            console.log('⚠️ Skip auto-start: Login sudah selesai');
+            return false;
+        }
+        
+        return true;
+    },
     
     async startLogin() {
-        if (this.loginInProgress) {
-            console.log('⚠️ Login sudah dalam proses');
+        // PENGECEKAN AWAL - STOP JIKA SUDAH LOGIN
+        if (window.WixLoginUtils?.isLoggedIn()) {
+            console.log('✅ SUDAH LOGIN - Menghentikan proses login');
+            window.WixLoginUI?.updateStatus('✅ Sudah login - Proses dihentikan');
+            this.onLoginSuccess();
             return;
         }
         
-        if (window.WixLoginUtils?.isLoggedIn()) {
-            console.log('✅ Sudah login!');
-            window.WixLoginUI?.updateStatus('✅ Sudah login');
+        if (this.loginInProgress) {
+            console.log('⚠️ Login sudah berlangsung');
+            return;
+        }
+        
+        if (this.loginCompleted) {
+            console.log('⚠️ Login sudah selesai sebelumnya');
             return;
         }
         
         this.loginInProgress = true;
+        this.loginCompleted = false;
         this.currentAccount = window.WixLoginUtils?.getRandomAccount();
         this.scrollAttempts = 0;
         
         try {
-            console.log('🚀 Memulai login dengan popup bypass...');
+            console.log('🚀 Starting login process...');
             window.WixLoginUI?.updateStatus('🚀 Memulai login...');
             
             this.startMonitoring();
             
+            // STEP 1: Cek lagi sebelum mencari comment box
+            if (await this.checkLoginBeforeStep('comment box')) return;
             await this.step1_FindCommentBox();
+            
+            // STEP 2: Cek lagi sebelum mencari login button
+            if (await this.checkLoginBeforeStep('login button')) return;
             await this.step2_LoginButton();
+            
+            // STEP 3: Cek lagi sebelum switch signup
+            if (await this.checkLoginBeforeStep('signup switch')) return;
             await this.step3_SwitchSignup();
-            await this.step4_GoogleButtonWithBypass();
+            
+            // STEP 4: Cek lagi sebelum Google button
+            if (await this.checkLoginBeforeStep('Google button')) return;
+            await this.step4_GoogleButton();
+            
+            // STEP 5: Wait for completion
             await this.step5_WaitCompletion();
             
         } catch (error) {
-            console.error('❌ Login gagal:', error.message);
-            this.handleLoginError(error);
+            console.error('❌ Login failed:', error.message);
+            window.WixLoginUI?.updateStatus(`❌ Error: ${error.message}`);
+            this.loginInProgress = false;
+            this.stopMonitoring();
+            
+            // Jangan set loginCompleted = true jika error
+            GM_notification(`Login error: ${error.message}`, 'Error');
         }
     },
     
+    // Fungsi untuk cek login sebelum setiap step
+    async checkLoginBeforeStep(stepName) {
+        console.log(`🔍 Checking login status before ${stepName} step...`);
+        
+        if (window.WixLoginUtils?.isLoggedIn()) {
+            console.log(`✅ SUDAH LOGIN - Skip ${stepName} step`);
+            window.WixLoginUI?.updateStatus(`✅ Sudah login - Skip ${stepName}`);
+            this.onLoginSuccess();
+            return true; // Return true = skip step
+        }
+        
+        return false; // Return false = continue step
+    },
+    
     async step1_FindCommentBox() {
-        console.log('\n📝 STEP 1: Mencari kotak komentar...');
-        window.WixLoginUI?.updateStatus('📝 Mencari kotak komentar...');
-        
-        const config = window.WixLoginConfig;
-        const commentBox = await window.WixLoginUtils?.waitForElementWithScroll(
-            config?.selectors?.commentBox, 
-            60000
-        );
-        
-        console.log('✅ Kotak komentar ditemukan!');
-        await this.clickElementAdvanced(commentBox, 'Kotak komentar');
-    },
-    
-    async step2_LoginButton() {
-        console.log('\n👤 STEP 2: Mencari tombol login...');
-        window.WixLoginUI?.updateStatus('👤 Mencari tombol login...');
-        
-        await window.WixLoginUtils?.delay(2000);
-        
-        const config = window.WixLoginConfig;
-        const loginButton = await window.WixLoginUtils?.waitForElementWithScroll(
-            config?.selectors?.loginButton, 
-            15000
-        );
-        await this.clickElementAdvanced(loginButton, 'Login sebagai member');
-    },
-    
-    async step3_SwitchSignup() {
-        console.log('\n📝 STEP 3: Mencari switch signup...');
-        window.WixLoginUI?.updateStatus('📝 Mencari switch signup...');
-        
-        await window.WixLoginUtils?.delay(2000);
-        
-        const config = window.WixLoginConfig;
-        const signupButton = await window.WixLoginUtils?.waitForElementWithScroll(
-            config?.selectors?.signupSwitch, 
-            15000
-        );
-        await this.clickElementAdvanced(signupButton, 'Switch ke signup');
-    },
-    
-    async step4_GoogleButtonWithBypass() {
-        console.log('\n🔓 STEP 4: Tombol Google dengan popup bypass...');
-        window.WixLoginUI?.updateStatus('🔓 Mencari tombol Google...');
-        
-        await window.WixLoginUtils?.delay(3000);
+        console.log('\n📝 STEP 1: Finding comment box...');
+        window.WixLoginUI?.updateStatus('📝 Mencari comment box...');
         
         try {
-            const googleButton = await this.findGoogleButton();
+            const commentBox = await window.WixLoginUtils?.findCommentBox();
+            console.log('✅ Comment box found!');
+            await window.WixLoginUtils?.clickElementAdvanced(commentBox, 'Comment box');
             
-            if (googleButton) {
-                console.log('✅ Tombol Google ditemukan, setup bypass...');
-                
-                // Pre-setup popup bypass
-                window.WixLoginPopupBypass?.setupPopupBypass();
-                
-                GM_notification(
-                    'Popup login Google akan terbuka. Silakan izinkan popup untuk situs ini.',
-                    'Izin Popup Diperlukan',
-                    null,
-                    () => console.log('User diberitahu tentang popup')
-                );
-                
-                await window.WixLoginUtils?.delay(2000);
-                
-                const clickSuccess = await this.clickElementAdvanced(googleButton, 'Tombol signup Google');
-                
-                if (clickSuccess) {
-                    console.log('✅ Tombol Google diklik dengan bypass');
-                } else {
-                    console.log('⚠️ Klik tidak pasti, melanjutkan...');
-                }
-                
-                await window.WixLoginUtils?.delay(window.WixLoginConfig?.delays?.wait || 2000);
-            } else {
-                throw new Error('Tombol Google tidak ditemukan');
+            // Delay dan cek login setelah klik
+            await this.delay(2000);
+            if (window.WixLoginUtils?.isLoggedIn()) {
+                console.log('✅ Login terdeteksi setelah klik comment box');
+                this.onLoginSuccess();
+                return;
             }
             
         } catch (error) {
-            console.log('❌ Step tombol Google gagal:', error.message);
+            console.log('❌ Step 1 failed:', error.message);
+            throw new Error(`Comment box step failed: ${error.message}`);
+        }
+    },
+    
+    async step2_LoginButton() {
+        console.log('\n👤 STEP 2: Looking for login button...');
+        window.WixLoginUI?.updateStatus('👤 Mencari login button...');
+        
+        await this.delay(2000);
+        
+        try {
+            const loginButton = await window.WixLoginUtils?.findLoginButton();
+            await window.WixLoginUtils?.clickElementAdvanced(loginButton, 'Login as member');
+            
+            // Delay dan cek login setelah klik
+            await this.delay(3000);
+            if (window.WixLoginUtils?.isLoggedIn()) {
+                console.log('✅ Login terdeteksi setelah klik login button');
+                this.onLoginSuccess();
+                return;
+            }
+            
+        } catch (error) {
+            console.log('❌ Step 2 failed:', error.message);
+            throw new Error(`Login button step failed: ${error.message}`);
+        }
+    },
+    
+    async step3_SwitchSignup() {
+        console.log('\n📝 STEP 3: Looking for signup switch...');
+        window.WixLoginUI?.updateStatus('📝 Mencari signup switch...');
+        
+        await this.delay(2000);
+        
+        try {
+            const signupButton = await window.WixLoginUtils?.findSignupSwitch();
+            await window.WixLoginUtils?.clickElementAdvanced(signupButton, 'Switch to signup');
+            
+            // Delay dan cek login setelah klik
+            await this.delay(3000);
+            if (window.WixLoginUtils?.isLoggedIn()) {
+                console.log('✅ Login terdeteksi setelah switch signup');
+                this.onLoginSuccess();
+                return;
+            }
+            
+        } catch (error) {
+            console.log('❌ Step 3 failed:', error.message);
+            throw new Error(`Signup switch step failed: ${error.message}`);
+        }
+    },
+    
+    async step4_GoogleButton() {
+        console.log('\n🔓 STEP 4: Google button...');
+        window.WixLoginUI?.updateStatus('🔓 Mencari Google button...');
+        
+        await this.delay(3000);
+        
+        try {
+            const googleButton = await window.WixLoginUtils?.findGoogleButton();
+            
+            if (googleButton) {
+                console.log('✅ Google button found');
+                
+                // Setup popup bypass
+                if (window.WixLoginPopupBypass?.setupPopupBypass) {
+                    window.WixLoginPopupBypass.setupPopupBypass();
+                }
+                
+                // Show notification about popup
+                GM_notification(
+                    'Google login popup akan terbuka. Pastikan popup diizinkan.',
+                    'Popup Permission Required'
+                );
+                
+                await this.delay(2000);
+                
+                // Click Google button
+                const clickSuccess = await window.WixLoginUtils?.clickElementAdvanced(googleButton, 'Google signup button');
+                
+                if (clickSuccess) {
+                    console.log('✅ Google button clicked');
+                } else {
+                    console.log('⚠️ Click uncertain, continuing...');
+                }
+                
+                await this.delay(5000);
+                
+                // Cek login setelah Google button
+                if (window.WixLoginUtils?.isLoggedIn()) {
+                    console.log('✅ Login terdeteksi setelah Google button');
+                    this.onLoginSuccess();
+                    return;
+                }
+                
+            } else {
+                throw new Error('Google button not found');
+            }
+            
+        } catch (error) {
+            console.log('❌ Step 4 failed:', error.message);
             this.showManualInstructions();
         }
     },
     
-    async step5_WaitCompletion() {
-        console.log('\n⏳ STEP 5: Menunggu penyelesaian login...');
-        window.WixLoginUI?.updateStatus('⏳ Menunggu penyelesaian...');
+    showManualInstructions() {
+        console.log('📋 Showing manual instructions...');
         
         GM_notification(
-            `Selesaikan login Google dengan: ${this.currentAccount?.email}`,
-            'Selesaikan Login',
+            'Silakan klik tombol Google signup secara manual. Pastikan popup diizinkan.',
+            'Manual Action Required',
             null,
-            () => console.log('User diberitahu untuk menyelesaikan login')
+            () => {
+                // Try to find and highlight Google button
+                const googleButton = window.WixLoginUtils?.findGoogleButton();
+                if (googleButton) {
+                    googleButton.style.border = '5px solid red';
+                    googleButton.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
+                    googleButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }
+        );
+    },
+    
+    async step5_WaitCompletion() {
+        console.log('\n⏳ STEP 5: Waiting for login completion...');
+        window.WixLoginUI?.updateStatus('⏳ Menunggu completion...');
+        
+        GM_notification(
+            `Selesaikan Google login dengan: ${this.currentAccount?.email}`,
+            'Complete Login'
         );
         
         return new Promise((resolve, reject) => {
             let attempts = 0;
-            const maxAttempts = 120;
+            const maxAttempts = 120; // 4 menit
             
             const checkLogin = setInterval(() => {
                 attempts++;
                 
                 if (window.WixLoginUtils?.isLoggedIn()) {
-                    console.log('🎉 LOGIN BERHASIL!');
+                    console.log('🎉 LOGIN SUCCESS!');
                     clearInterval(checkLogin);
                     this.onLoginSuccess();
                     resolve();
@@ -162,349 +285,100 @@ window.WixLoginCore = {
                 }
                 
                 if (attempts % 20 === 0) {
-                    console.log(`⏳ Masih menunggu... ${attempts}/${maxAttempts}`);
+                    console.log(`⏳ Still waiting... ${attempts}/${maxAttempts}`);
                     window.WixLoginUI?.updateStatus(`⏳ Menunggu... ${attempts}/${maxAttempts}`);
                 }
             }, 2000);
         });
     },
     
-    async findGoogleButton() {
-        console.log('🔍 Pencarian tombol Google yang ditingkatkan...');
-        
-        const config = window.WixLoginConfig;
-        const selectors = config?.selectors?.googleButtons || [];
-        
-        for (const selector of selectors) {
-            try {
-                const elements = document.querySelectorAll(selector);
-                
-                for (const element of elements) {
-                    const text = element.textContent?.toLowerCase() || '';
-                    const ariaLabel = element.getAttribute('aria-label')?.toLowerCase() || '';
-                    const title = element.getAttribute('title')?.toLowerCase() || '';
-                    const className = element.className?.toLowerCase() || '';
-                    
-                    if (text.includes('google') || 
-                        ariaLabel.includes('google') || 
-                        title.includes('google') ||
-                        className.includes('google')) {
-                        
-                        console.log(`✅ Tombol Google ditemukan dengan selector: ${selector}`);
-                        console.log('Detail tombol:', {
-                            text: text.substring(0, 50),
-                            ariaLabel: element.getAttribute('aria-label'),
-                            title: element.getAttribute('title'),
-                            className: element.className
-                        });
-                        
-                        return element;
-                    }
-                }
-            } catch (error) {
-                console.log(`⚠️ Selector gagal: ${selector}`, error.message);
-            }
-        }
-        
-        // Fallback: search by text content
-        console.log('🔍 Fallback: mencari berdasarkan konten teks...');
-        const allButtons = document.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"]');
-        
-        for (const button of allButtons) {
-            const text = button.textContent?.toLowerCase() || '';
-            if (text.includes('google') || text.includes('sign up with google') || text.includes('continue with google')) {
-                console.log('✅ Tombol Google ditemukan berdasarkan konten teks:', text);
-                return button;
-            }
-        }
-        
-        return null;
-    },
-    
-    async clickElementAdvanced(element, description = '') {
-        if (!element) {
-            throw new Error(`Tidak bisa klik: ${description} - element tidak ditemukan`);
-        }
-        
-        console.log(`🖱️ Klik lanjutan dengan popup bypass: ${description}`);
-        
-        // Scroll to element first
-        await window.WixLoginUtils?.scrollToElement(element);
-        await window.WixLoginUtils?.delay(500);
-        
-        // For Google buttons, setup popup bypass first
-        if (description.toLowerCase().includes('google')) {
-            console.log('🔓 Setup popup bypass untuk tombol Google...');
-            window.WixLoginPopupBypass?.setupPopupBypass();
-            
-            const clickHandler = (event) => {
-                console.log('👆 User gesture terdeteksi untuk tombol Google');
-                element.removeEventListener('click', clickHandler);
-            };
-            element.addEventListener('click', clickHandler);
-        }
-        
-        // Multiple click methods with popup context
-        const clickMethods = [
-            () => {
-                console.log('   Method 1: Standard click() dengan user gesture');
-                const mouseEvent = new MouseEvent('click', {
-                    bubbles: true,
-                    cancelable: true,
-                    view: window,
-                    isTrusted: true
-                });
-                element.dispatchEvent(mouseEvent);
-                element.click();
-            },
-            () => {
-                console.log('   Method 2: Focus + click dengan user gesture');
-                element.focus();
-                element.click();
-            },
-            () => {
-                console.log('   Method 3: MouseEvent sequence');
-                const mouseDown = new MouseEvent('mousedown', { 
-                    bubbles: true, 
-                    cancelable: true,
-                    view: window,
-                    isTrusted: true
-                });
-                const mouseUp = new MouseEvent('mouseup', { 
-                    bubbles: true, 
-                    cancelable: true,
-                    view: window,
-                    isTrusted: true
-                });
-                const clickEvent = new MouseEvent('click', { 
-                    bubbles: true, 
-                    cancelable: true,
-                    view: window,
-                    isTrusted: true
-                });
-                
-                element.dispatchEvent(mouseDown);
-                element.dispatchEvent(mouseUp);
-                element.dispatchEvent(clickEvent);
-            },
-            () => {
-                console.log('   Method 4: Direct onclick dengan context');
-                if (element.onclick) {
-                    element.onclick.call(element);
-                } else {
-                    element.click();
-                }
-            },
-            () => {
-                console.log('   Method 5: Programmatic click dengan delay');
-                setTimeout(() => element.click(), 100);
-            }
-        ];
-        
-        // Try each click method
-        for (let i = 0; i < clickMethods.length; i++) {
-            try {
-                console.log(`🖱️ Mencoba click method ${i + 1}/${clickMethods.length}`);
-                clickMethods[i]();
-                await window.WixLoginUtils?.delay(1500);
-                
-                if (this.checkClickSuccess()) {
-                    console.log(`✅ Click method ${i + 1} berhasil!`);
-                    return true;
-                }
-            } catch (error) {
-                console.log(`   Click method ${i + 1} gagal:`, error.message);
-            }
-        }
-        
-        console.log('⚠️ Semua click method telah dicoba');
-        return false;
-    },
-    
-    checkClickSuccess() {
-        // Check if Google popup opened
-        const popupBypass = window.WixLoginPopupBypass;
-        if (popupBypass?.currentPopup && !popupBypass.currentPopup.closed) {
-            console.log('✅ Popup Google terbuka');
-            return true;
-        }
-        
-        // Check if redirected to Google
-        if (window.location.href.includes('accounts.google.com')) {
-            console.log('✅ Redirect ke Google');
-            return true;
-        }
-        
-        // Check for new modal/overlay
-        const modals = document.querySelectorAll('[role="dialog"], .modal, .overlay, .popup');
-        if (modals.length > 0) {
-            console.log('✅ Modal/dialog baru terdeteksi');
-            return true;
-        }
-        
-        // Check if popup was blocked but URL changed
-        if (popupBypass?.popupBlocked) {
-            console.log('⚠️ Popup diblokir tapi klik terdaftar');
-            return true;
-        }
-        
-        return false;
-    },
-    
-    showManualInstructions() {
-        console.log('📋 Menampilkan instruksi manual...');
-        
-        GM_notification(
-            'Silakan klik tombol signup Google secara manual. Pastikan popup diizinkan.',
-            'Aksi Manual Diperlukan',
-            null,
-            () => {
-                // Try to find and highlight Google button
-                this.findGoogleButton().then(googleButton => {
-                    if (googleButton) {
-                        googleButton.style.border = '5px solid red';
-                        googleButton.style.backgroundColor = 'rgba(255, 0, 0, 0.3)';
-                        googleButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    }
-                });
-            }
-        );
-    },
-    
+    // ==================== MONITORING ====================
     startMonitoring() {
-        console.log('👀 Memulai monitoring login...');
+        console.log('👀 Starting login monitoring...');
         
-        const config = window.WixLoginConfig;
         this.checkInterval = setInterval(() => {
             if (window.WixLoginUtils?.isLoggedIn()) {
-                console.log('🎉 Login terdeteksi!');
+                console.log('🎉 Login detected via monitoring!');
                 this.onLoginSuccess();
                 this.stopMonitoring();
             }
-        }, config?.delays?.check || 3000);
+        }, 3000); // Check every 3 seconds
     },
     
     stopMonitoring() {
         if (this.checkInterval) {
             clearInterval(this.checkInterval);
             this.checkInterval = null;
-            console.log('⏹️ Monitoring dihentikan');
+            console.log('⏹️ Monitoring stopped');
         }
     },
     
     onLoginSuccess() {
-        console.log('🎉 LOGIN BERHASIL DIKONFIRMASI!');
+        console.log('🎉 LOGIN SUCCESS CONFIRMED!');
+        
+        // Set flags
+        this.loginInProgress = false;
+        this.loginCompleted = true;
         
         window.WixLoginUI?.updateStatus('🎉 Login berhasil!');
-        GM_notification('Login berhasil diselesaikan!', 'Berhasil');
+        GM_notification('Login berhasil!', 'Success');
         
-        this.loginInProgress = false;
         this.stopMonitoring();
         
-        // Close popup if still open
-        const popupBypass = window.WixLoginPopupBypass;
-        if (popupBypass?.currentPopup && !popupBypass.currentPopup.closed) {
-            try {
-                popupBypass.currentPopup.close();
-                console.log('✅ Popup ditutup');
-            } catch (e) {
-                console.log('⚠️ Tidak bisa menutup popup:', e.message);
-            }
-        }
-        
-        // Restore original window.open
-        popupBypass?.restore();
-        
+        // Save login info
         GM_setValue('last_login_success', Date.now());
-        GM_setValue('last_login_account', this.currentAccount?.email);
+        GM_setValue('last_login_account', this.currentAccount?.email || 'unknown');
         
-        console.log('✅ Siap untuk fase berikutnya');
-    },
-    
-    handleLoginError(error) {
-        console.error('❌ Error login:', error.message);
+        console.log('✅ Login process completed, ready for next phase');
         
-        GM_setValue('last_login_failure', Date.now());
-        GM_setValue('last_error_message', error.message);
-        
-        window.WixLoginUI?.updateStatus(`❌ Error: ${error.message}`);
-        window.WixLoginUI?.updateInfo('Login gagal');
-        
-        this.loginInProgress = false;
-        this.stopMonitoring();
-        
-        GM_notification(
-            `Login gagal: ${error.message}`,
-            'Error Login',
-            null,
-            () => {
-                if (confirm('Login gagal. Coba lagi?')) {
-                    setTimeout(() => this.startLogin(), 2000);
-                }
+        // Trigger next phase (comment) setelah delay
+        setTimeout(() => {
+            if (window.WixLoginApp?.handleLoggedInUser) {
+                console.log('🚀 Triggering next phase...');
+                window.WixLoginApp.handleLoggedInUser();
             }
-        );
+        }, 3000);
     },
     
-    shouldAutoStart() {
-        // Check if already logged in
-        if (window.WixLoginUtils?.isLoggedIn()) {
-            console.log('⚠️ Sudah login, tidak perlu auto-start');
-            return false;
-        }
-        
-        // Check if this is target site
-        if (!window.WixLoginUtils?.isTargetSite()) {
-            console.log('⚠️ Bukan situs target, tidak auto-start');
-            return false;
-        }
-        
-        // Check if recently failed (within 5 minutes)
-        const lastFailure = GM_getValue('last_login_failure', 0);
-        const now = Date.now();
-        if (now - lastFailure < 5 * 60 * 1000) {
-            console.log('⚠️ Baru saja gagal login, skip auto-start');
-            return false;
-        }
-        
-        // Check if already succeeded today
-        const lastSuccess = GM_getValue('last_login_success', 0);
-        const today = new Date().toDateString();
-        const lastSuccessDate = new Date(lastSuccess).toDateString();
-        
-        if (today === lastSuccessDate) {
-            console.log('⚠️ Sudah berhasil login hari ini, skip auto-start');
-            return false;
-        }
-        
-        return true;
-    },
-    
-    resetState() {
-        console.log('🔄 Reset state...');
+    // ==================== RESET FUNCTIONS ====================
+    resetLoginState() {
+        console.log('🔄 Resetting login state...');
         
         this.loginInProgress = false;
+        this.loginCompleted = false;
         this.currentAccount = null;
         this.scrollAttempts = 0;
         
-        // Stop monitoring
         this.stopMonitoring();
         
-        // Reset popup bypass
-        window.WixLoginPopupBypass?.restore();
+        console.log('✅ Login state reset');
+    },
+    
+    forceRestartLogin() {
+        console.log('🔄 Force restart login...');
         
-        // Update UI
-        window.WixLoginUI?.updateStatus('🔄 Reset selesai');
-        window.WixLoginUI?.updateInfo('State direset');
-        window.WixLoginUI?.updatePopupStatus();
+        this.resetLoginState();
         
-        // Re-check status
         setTimeout(() => {
-            window.WixLoginUI?.updateInitialStatus();
-        }, 1000);
-        
-        console.log('✅ Reset selesai');
-        GM_notification('State berhasil direset', 'Reset');
+            this.startLogin();
+        }, 2000);
+    },
+    
+    // ==================== UTILITY ====================
+    delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    },
+    
+    // ==================== STATUS CHECKS ====================
+    getLoginStatus() {
+        return {
+            isLoggedIn: window.WixLoginUtils?.isLoggedIn() || false,
+            loginInProgress: this.loginInProgress,
+            loginCompleted: this.loginCompleted,
+            currentAccount: this.currentAccount?.email || null,
+            hasMonitoring: !!this.checkInterval
+        };
     }
 };
 
-console.log('✅ WixLoginCore loaded');
+console.log('✅ WixLoginCore loaded with login completion detection');
