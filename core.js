@@ -284,7 +284,7 @@ window.WixLoginCore = {
     },
     
     async step4_GoogleButton() {
-        console.log('\n🔓 STEP 4: Google button...');
+        console.log('\n🔓 STEP 4: Google button with enhanced auto-fill...');
         window.WixLoginUI?.updateStatus('🔓 Mencari Google button...');
         
         // CEK LOGIN SEBELUM STEP 4
@@ -302,35 +302,49 @@ window.WixLoginCore = {
             if (googleButton) {
                 console.log('✅ Google button found');
                 
-                // Setup popup bypass
+                // Setup popup bypass with enhanced auto-fill
                 if (window.WixLoginPopupBypass?.setupPopupBypass) {
                     window.WixLoginPopupBypass.setupPopupBypass();
                 }
                 
-                // HAPUS NOTIFIKASI POPUP - TIDAK PERLU
-                // GM_notification('Google login popup akan terbuka...', 'Popup Permission Required');
-                
                 await this.delay(2000);
                 
                 // Click Google button
+                console.log('🖱️ Clicking Google button...');
                 const clickSuccess = await window.WixLoginUtils?.clickElementAdvanced(googleButton, 'Google signup button');
                 
                 if (clickSuccess) {
                     console.log('✅ Google button clicked');
+                    window.WixLoginUI?.updateStatus('✅ Google popup opened');
                 } else {
                     console.log('⚠️ Click uncertain, continuing...');
                 }
                 
-                await this.delay(5000);
+                // Wait a bit for popup to open
+                await this.delay(3000);
                 
-                // Cek login setelah Google button
-                if (window.WixLoginUtils?.isLoggedIn()) {
-                    console.log('✅ Login terdeteksi setelah Google button');
-                    this.onLoginSuccess();
-                    return;
+                // Check if popup opened and try enhanced auto-fill
+                const popupStatus = window.WixLoginPopupBypass?.getPopupStatus();
+                if (popupStatus?.hasCurrentPopup) {
+                    console.log('🚀 Popup detected, starting enhanced auto-fill...');
+                    window.WixLoginUI?.updateStatus('🔐 Auto-filling login...');
+                    
+                    // Try enhanced auto-fill
+                    setTimeout(async () => {
+                        const autoFillSuccess = await window.WixLoginPopupBypass?.enhancedAutoFill(window.WixLoginPopupBypass.currentPopup);
+                        
+                        if (autoFillSuccess) {
+                            console.log('✅ Enhanced auto-fill completed');
+                            window.WixLoginUI?.updateStatus('✅ Auto-fill completed');
+                        } else {
+                            console.log('⚠️ Auto-fill failed, showing manual instruction');
+                            window.WixLoginUI?.updateStatus('👤 Manual login required');
+                            window.WixLoginPopupBypass?.forceManualLogin();
+                        }
+                    }, 2000);
                 }
                 
-                // Lanjut ke step 5 (wait completion)
+                // Continue to wait for completion
                 await this.step5_WaitCompletion();
                 
             } else {
